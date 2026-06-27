@@ -10,40 +10,36 @@ const astrologerRoutes = require('./routes/astrologerRoutes');
 const callRoutes = require('./routes/callRoutes');
 
 const app = express();
-const server = http.createServer(app); // ✅ http server banao socket ke liye
+const server = http.createServer(app);
 
-// ✅ Socket.io setup
 const io = new Server(server, {
-  cors: { origin: '*' },
+  cors: { origin: '*', methods: ['GET', 'POST'] },
+  transports: ['websocket', 'polling'],
 });
 
-// Astrologer ka socketId store karo (memory mein — production mein Redis use karna)
-// Format: { astrologerId: socketId }
+// astrologerId → socketId mapping
 const astrologerSockets = {};
 
 io.on('connection', (socket) => {
   console.log('🔌 Socket connected:', socket.id);
 
-  // Astrologer apna ID register karta hai jab dashboard khule
   socket.on('register_astrologer', (astrologerId) => {
-    astrologerSockets[astrologerId] = socket.id;
-    console.log(`✅ Astrologer ${astrologerId} registered with socket ${socket.id}`);
+    if (!astrologerId) return;
+    astrologerSockets[astrologerId.toString()] = socket.id;
+    console.log(`✅ Astrologer ${astrologerId} → socket ${socket.id}`);
   });
 
-  // Disconnect pe remove karo
   socket.on('disconnect', () => {
-    for (const [astId, sockId] of Object.entries(astrologerSockets)) {
-      if (sockId === socket.id) {
-        delete astrologerSockets[astId];
-        console.log(`❌ Astrologer ${astId} disconnected`);
+    for (const [id, sid] of Object.entries(astrologerSockets)) {
+      if (sid === socket.id) {
+        delete astrologerSockets[id];
+        console.log(`❌ Astrologer ${id} disconnected`);
         break;
       }
     }
-    console.log('🔌 Socket disconnected:', socket.id);
   });
 });
 
-// io aur astrologerSockets ko routes mein use karne ke liye
 app.set('io', io);
 app.set('astrologerSockets', astrologerSockets);
 
@@ -54,16 +50,19 @@ app.use('/api/auth', authRoutes);
 app.use('/api/astrologers', astrologerRoutes);
 app.use('/api/calls', callRoutes);
 
+// Health check
+app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+
 async function startServer() {
   try {
     await mongoose.connect(process.env.MONGO_URI);
     console.log('✅ Mongo Connected');
-
     server.listen(process.env.PORT || 5000, () => {
-      console.log(`✅ Server Running on port ${process.env.PORT || 5000}`);
+      console.log(`✅ Server on port ${process.env.PORT || 5000}`);
     });
-  } catch (error) {
-    console.error('❌ Mongo Connection Error:', error);
+  } catch (err) {
+    console.error('❌ Startup error:', err);
+    process.exit(1);
   }
 }
 
