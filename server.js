@@ -8,6 +8,7 @@ require('dotenv').config();
 const authRoutes = require('./routes/authRoutes');
 const astrologerRoutes = require('./routes/astrologerRoutes');
 const callRoutes = require('./routes/callRoutes');
+const debugRoutes = require('./routes/debugRoutes'); // ← TEMP: remove in production
 
 const app = express();
 const server = http.createServer(app);
@@ -27,6 +28,7 @@ io.on('connection', (socket) => {
     if (!astrologerId) return;
     astrologerSockets[astrologerId.toString()] = socket.id;
     console.log(`✅ Astrologer ${astrologerId} → socket ${socket.id}`);
+    console.log(`📊 Total connected astrologers: ${Object.keys(astrologerSockets).length}`);
   });
 
   socket.on('disconnect', () => {
@@ -49,14 +51,23 @@ app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/astrologers', astrologerRoutes);
 app.use('/api/calls', callRoutes);
+app.use('/api/debug', debugRoutes); // ← TEMP: remove in production
 
 // Health check
-app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
 async function startServer() {
   try {
     await mongoose.connect(process.env.MONGO_URI);
     console.log('✅ Mongo Connected');
+
+    // Startup env check
+    console.log('─── ENV CHECK ───────────────────────────────');
+    console.log(`AGORA_APP_ID:          ${process.env.AGORA_APP_ID ? '✅ SET' : '❌ MISSING'}`);
+    console.log(`AGORA_APP_CERTIFICATE: ${process.env.AGORA_APP_CERTIFICATE ? '✅ SET' : '❌ MISSING'}`);
+    console.log(`JWT_SECRET:            ${process.env.JWT_SECRET ? '✅ SET' : '❌ MISSING'}`);
+    console.log('─────────────────────────────────────────────');
+
     server.listen(process.env.PORT || 5000, () => {
       console.log(`✅ Server on port ${process.env.PORT || 5000}`);
     });
