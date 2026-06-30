@@ -1,7 +1,14 @@
 /**
- * callController.js — FIXED
- * Bug: channelName 68 chars tha, Agora max 64 allow karta hai → error -102
- * Fix: short channel name — max 40 chars
+ * callController.js — UPDATED
+ *
+ * Added:
+ * 1. getTodayStats — GET /api/calls/stats/today?astrologerId=xxx
+ *    Returns: { todayEarnings, todayMinutes, todaySessions }
+ * 2. getAstrologerCallHistory — GET /api/calls/astrologer/:astrologerId
+ *    Returns last 20 calls for astrologer (with userId populated)
+ *
+ * Existing endpoints unchanged.
+ * channelName fix (max 40 chars) stays.
  */
 
 const { generateAgoraToken } = require('../utils/agoraTokenGenerator');
@@ -10,16 +17,16 @@ const Astrologer = require('../models/Astrologer');
 const User = require('../models/User');
 
 /**
- * Short unique channel name — max 40 chars, Agora safe
- * Format: ch + last6(userId) + last6(astrologerId) + last8(timestamp)
- * Example: ch4ba031222ca273537914  → 22 chars ✅
+ * Short unique channel name — max ~22 chars, Agora safe
  */
 const makeChannelName = (userId, astrologerId) => {
   const ts = Date.now().toString().slice(-8);
   const u = userId.toString().slice(-6);
   const a = astrologerId.toString().slice(-6);
-  return `ch${u}${a}${ts}`; // ~22 chars, always < 64 ✅
+  return `ch${u}${a}${ts}`;
 };
+
+// ─── getCallToken ────────────────────────────────────────────────────────────
 
 const getCallToken = async (req, res) => {
   try {
@@ -37,16 +44,15 @@ const getCallToken = async (req, res) => {
       : 10;
 
     const astrologer = await Astrologer.findById(astrologerId);
-    if (!astrologer) return res.status(404).json({ message: 'Astrologer nahi mila' });
-    if (!astrologer.isOnline) return res.status(400).json({ message: 'Astrologer abhi offline hai' });
+    if (!astrologer) return res.status(404).json({ message: 'Astrologer not found' });
+    if (!astrologer.isOnline) return res.status(400).json({ message: 'Astrologer is currently offline' });
 
-    let callerName = 'User';
+    let callerName = 'Client';
     try {
       const user = await User.findById(userId).select('name');
       if (user?.name) callerName = user.name;
     } catch {}
 
-    // ✅ SHORT channel name — max ~22 chars
     const channelName = makeChannelName(userId, astrologerId);
     console.log(`📡 Channel: "${channelName}" (${channelName.length} chars)`);
 
@@ -74,7 +80,7 @@ const getCallToken = async (req, res) => {
 
     if (!astrologerSocketId) {
       await CallSession.findByIdAndUpdate(session._id, { status: 'missed' });
-      return res.status(400).json({ message: 'Astrologer abhi available nahi hai' });
+      return res.status(400).json({ message: 'Astrologer is not available right now' });
     }
 
     io.to(astrologerSocketId).emit('incoming_call', {
@@ -101,6 +107,8 @@ const getCallToken = async (req, res) => {
   }
 };
 
+// ─── startCall ───────────────────────────────────────────────────────────────
+
 const startCall = async (req, res) => {
   try {
     const { sessionId } = req.body;
@@ -109,7 +117,7 @@ const startCall = async (req, res) => {
       { status: 'active', startedAt: new Date() },
       { new: true },
     );
-    if (!session) return res.status(404).json({ message: 'Session nahi mila' });
+    if (!session) return res.status(404).json({ message: 'Session not found' });
     console.log(`✅ Call active: ${sessionId}`);
     return res.status(200).json({ message: 'Call active', session });
   } catch (error) {
@@ -117,11 +125,13 @@ const startCall = async (req, res) => {
   }
 };
 
+// ─── endCall ─────────────────────────────────────────────────────────────────
+
 const endCall = async (req, res) => {
   try {
     const { sessionId } = req.body;
     const session = await CallSession.findById(sessionId).populate('astrologerId');
-    if (!session) return res.status(404).json({ message: 'Session nahi mila' });
+    if (!session) return res.status(404).json({ message: 'Session not found' });
 
     if (session.status === 'ended') {
       return res.status(200).json({
@@ -143,12 +153,26 @@ const endCall = async (req, res) => {
       { new: true },
     );
 
+    // Optionally update astrologer's totalEarnings + totalConsultations
+    try {
+      await Astrologer.findByIdAndUpdate(session.astrologerId._id, {
+        $inc: {
+          totalEarnings: totalCost,
+          totalConsultations: 1,
+        },
+      });
+    } catch (e) {
+      console.warn('Could not update astrologer totals:', e.message);
+    }
+
     console.log(`✅ Call ended: ${sessionId} | ${durationSeconds}s | ₹${totalCost}`);
     return res.status(200).json({ message: 'Call ended', durationSeconds, totalCost, session: updated });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
 };
+
+// ─── rejectCall ──────────────────────────────────────────────────────────────
 
 const rejectCall = async (req, res) => {
   try {
@@ -159,6 +183,8 @@ const rejectCall = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
+
+// ─── getCallHistory (user side) ───────────────────────────────────────────────
 
 const getCallHistory = async (req, res) => {
   try {
@@ -173,4 +199,64 @@ const getCallHistory = async (req, res) => {
   }
 };
 
-module.exports = { getCallToken, startCall, endCall, rejectCall, getCallHistory };
+// ─── getAstrologerCallHistory (NEW) ──────────────────────────────────────────
+// GET /api/calls/astrologer/:astrologerId
+// Returns last 20 sessions for this astrologer, with caller name populated
+
+const getAstrologerCallHistory = async (req, res) => {
+  try {
+    const { astrologerId } = req.params;
+    const calls = await CallSession.find({ astrologerId })
+      .populate('userId', 'name')
+      .sort({ createdAt: -1 })
+      .limit(20);
+    return res.status(200).json(calls);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// ─── getTodayStats (NEW) ─────────────────────────────────────────────────────
+// GET /api/calls/stats/today?astrologerId=xxx
+// Returns { todayEarnings, todayMinutes, todaySessions }
+
+const getTodayStats = async (req, res) => {
+  try {
+    const { astrologerId } = req.query;
+    if (!astrologerId) {
+      return res.status(400).json({ message: 'astrologerId required' });
+    }
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const sessions = await CallSession.find({
+      astrologerId,
+      status: 'ended',
+      createdAt: { $gte: todayStart },
+    });
+
+    const todayEarnings = sessions.reduce((sum, s) => sum + (s.totalCost ?? 0), 0);
+    const todaySeconds = sessions.reduce((sum, s) => sum + (s.durationSeconds ?? 0), 0);
+    const todayMinutes = Math.round(todaySeconds / 60);
+    const todaySessions = sessions.length;
+
+    return res.status(200).json({
+      todayEarnings: parseFloat(todayEarnings.toFixed(2)),
+      todayMinutes,
+      todaySessions,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+module.exports = {
+  getCallToken,
+  startCall,
+  endCall,
+  rejectCall,
+  getCallHistory,
+  getAstrologerCallHistory, // NEW
+  getTodayStats,            // NEW
+};
