@@ -1,14 +1,30 @@
 /**
  * callController.js — UPDATED
  *
- * Added:
- * 1. getTodayStats — GET /api/calls/stats/today?astrologerId=xxx
- *    Returns: { todayEarnings, todayMinutes, todaySessions }
- * 2. getAstrologerCallHistory — GET /api/calls/astrologer/:astrologerId
- *    Returns last 20 calls for astrologer (with userId populated)
+ * Changes from last version:
+ * 1. endCall now emits  'call_ended'  to the user's socket so their
+ *    CallScreen auto-disconnects when the astrologer ends the call.
+ *    Requires:  userSockets map  on the server (same pattern as astrologerSockets).
  *
- * Existing endpoints unchanged.
- * channelName fix (max 40 chars) stays.
+ * 2. getTodayStats and getAstrologerCallHistory unchanged.
+ *
+ * ─── Socket setup needed in server.js (if not already) ───────────────────
+ *
+ *   const userSockets = {};          // userId → socketId
+ *   app.set('userSockets', userSockets);
+ *
+ *   io.on('connection', (socket) => {
+ *     socket.on('register_user', (userId) => {
+ *       userSockets[userId] = socket.id;
+ *     });
+ *     socket.on('disconnect', () => {
+ *       // clean up — optional but good practice
+ *       for (const [id, sid] of Object.entries(userSockets)) {
+ *         if (sid === socket.id) { delete userSockets[id]; break; }
+ *       }
+ *     });
+ *   });
+ * ─────────────────────────────────────────────────────────────────────────
  */
 
 const { generateAgoraToken } = require('../utils/agoraTokenGenerator');
@@ -153,7 +169,7 @@ const endCall = async (req, res) => {
       { new: true },
     );
 
-    // Optionally update astrologer's totalEarnings + totalConsultations
+    // Update astrologer totals
     try {
       await Astrologer.findByIdAndUpdate(session.astrologerId._id, {
         $inc: {
@@ -163,6 +179,21 @@ const endCall = async (req, res) => {
       });
     } catch (e) {
       console.warn('Could not update astrologer totals:', e.message);
+    }
+
+    // ✅ NEW: Notify user's socket so CallScreen auto-disconnects
+    try {
+      const io = req.app.get('io');
+      const userSockets = req.app.get('userSockets'); // map: userId → socketId
+      const userSocketId = userSockets?.[session.userId?.toString()];
+      if (io && userSocketId) {
+        io.to(userSocketId).emit('call_ended', { sessionId });
+        console.log(`✅ call_ended emitted → user socket ${userSocketId}`);
+      } else {
+        console.log(`ℹ️ User socket not found for userId: ${session.userId}`);
+      }
+    } catch (socketErr) {
+      console.warn('Could not emit call_ended to user:', socketErr.message);
     }
 
     console.log(`✅ Call ended: ${sessionId} | ${durationSeconds}s | ₹${totalCost}`);
@@ -199,9 +230,7 @@ const getCallHistory = async (req, res) => {
   }
 };
 
-// ─── getAstrologerCallHistory (NEW) ──────────────────────────────────────────
-// GET /api/calls/astrologer/:astrologerId
-// Returns last 20 sessions for this astrologer, with caller name populated
+// ─── getAstrologerCallHistory ─────────────────────────────────────────────────
 
 const getAstrologerCallHistory = async (req, res) => {
   try {
@@ -216,9 +245,7 @@ const getAstrologerCallHistory = async (req, res) => {
   }
 };
 
-// ─── getTodayStats (NEW) ─────────────────────────────────────────────────────
-// GET /api/calls/stats/today?astrologerId=xxx
-// Returns { todayEarnings, todayMinutes, todaySessions }
+// ─── getTodayStats ────────────────────────────────────────────────────────────
 
 const getTodayStats = async (req, res) => {
   try {
@@ -257,6 +284,6 @@ module.exports = {
   endCall,
   rejectCall,
   getCallHistory,
-  getAstrologerCallHistory, // NEW
-  getTodayStats,            // NEW
+  getAstrologerCallHistory,
+  getTodayStats,
 };
