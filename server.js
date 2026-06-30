@@ -8,7 +8,7 @@ require('dotenv').config();
 const authRoutes = require('./routes/authRoutes');
 const astrologerRoutes = require('./routes/astrologerRoutes');
 const callRoutes = require('./routes/callRoutes');
-const debugRoutes = require('./routes/debugRoutes'); // ← TEMP: remove in production
+const debugRoutes = require('./routes/debugRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -18,8 +18,10 @@ const io = new Server(server, {
   transports: ['websocket', 'polling'],
 });
 
-// astrologerId → socketId mapping
+// astrologerId → socketId
 const astrologerSockets = {};
+// userId → socketId  ✅ NEW
+const userSockets = {};
 
 io.on('connection', (socket) => {
   console.log('🔌 Socket connected:', socket.id);
@@ -28,14 +30,29 @@ io.on('connection', (socket) => {
     if (!astrologerId) return;
     astrologerSockets[astrologerId.toString()] = socket.id;
     console.log(`✅ Astrologer ${astrologerId} → socket ${socket.id}`);
-    console.log(`📊 Total connected astrologers: ${Object.keys(astrologerSockets).length}`);
+  });
+
+  // ✅ NEW — user apna socketId register karega jab CallScreen mount ho
+  socket.on('register_user', (userId) => {
+    if (!userId) return;
+    userSockets[userId.toString()] = socket.id;
+    console.log(`✅ User ${userId} → socket ${socket.id}`);
   });
 
   socket.on('disconnect', () => {
+    // Astrologer cleanup
     for (const [id, sid] of Object.entries(astrologerSockets)) {
       if (sid === socket.id) {
         delete astrologerSockets[id];
         console.log(`❌ Astrologer ${id} disconnected`);
+        break;
+      }
+    }
+    // User cleanup ✅ NEW
+    for (const [id, sid] of Object.entries(userSockets)) {
+      if (sid === socket.id) {
+        delete userSockets[id];
+        console.log(`❌ User ${id} disconnected`);
         break;
       }
     }
@@ -44,6 +61,7 @@ io.on('connection', (socket) => {
 
 app.set('io', io);
 app.set('astrologerSockets', astrologerSockets);
+app.set('userSockets', userSockets); // ✅ NEW
 
 app.use(cors());
 app.use(express.json());
@@ -51,9 +69,8 @@ app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/astrologers', astrologerRoutes);
 app.use('/api/calls', callRoutes);
-app.use('/api/debug', debugRoutes); // ← TEMP: remove in production
+app.use('/api/debug', debugRoutes);
 
-// Health check
 app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
 async function startServer() {
@@ -61,7 +78,6 @@ async function startServer() {
     await mongoose.connect(process.env.MONGO_URI);
     console.log('✅ Mongo Connected');
 
-    // Startup env check
     console.log('─── ENV CHECK ───────────────────────────────');
     console.log(`AGORA_APP_ID:          ${process.env.AGORA_APP_ID ? '✅ SET' : '❌ MISSING'}`);
     console.log(`AGORA_APP_CERTIFICATE: ${process.env.AGORA_APP_CERTIFICATE ? '✅ SET' : '❌ MISSING'}`);
