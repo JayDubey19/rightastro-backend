@@ -50,22 +50,32 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', async () => {
     // Astrologer cleanup
+    // ✅ FIX: sirf tab hi map/DB clear karo jab ye disconnecting socket hi
+    // abhi bhi is astrologerId ke liye "current" registered socket ho.
+    // Warna race condition: purane socket ka delayed disconnect event
+    // naye (already-reconnected) socket ki registration ko wipe kar deta tha.
     if (socket.astrologerId) {
-      delete astrologerSockets[socket.astrologerId];
-      console.log(`❌ Astrologer ${socket.astrologerId} disconnected`);
+      if (astrologerSockets[socket.astrologerId] === socket.id) {
+        delete astrologerSockets[socket.astrologerId];
+        console.log(`❌ Astrologer ${socket.astrologerId} disconnected`);
 
-      // ✅ FIX: socket disconnect hote hi DB me isOnline = false karo
-      try {
-        await Astrologer.findByIdAndUpdate(socket.astrologerId, { isOnline: false });
-      } catch (e) {
-        console.error('❌ isOnline=false update failed:', e.message);
+        try {
+          await Astrologer.findByIdAndUpdate(socket.astrologerId, { isOnline: false });
+        } catch (e) {
+          console.error('❌ isOnline=false update failed:', e.message);
+        }
+      } else {
+        console.log(`⏭️ Stale disconnect ignored for astrologer ${socket.astrologerId} (already replaced by newer socket)`);
       }
     }
 
     // User cleanup
+    // Same guard for users, same race condition possible
     if (socket.userId) {
-      delete userSockets[socket.userId];
-      console.log(`❌ User ${socket.userId} disconnected`);
+      if (userSockets[socket.userId] === socket.id) {
+        delete userSockets[socket.userId];
+        console.log(`❌ User ${socket.userId} disconnected`);
+      }
     }
   });
 });
