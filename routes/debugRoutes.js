@@ -50,10 +50,37 @@ router.get('/agora', (req, res) => {
 // Check connected astrologer sockets
 router.get('/sockets', (req, res) => {
   const astrologerSockets = req.app.get('astrologerSockets') || {};
+  const userSockets = req.app.get('userSockets') || {};
   res.json({
     connectedAstrologers: Object.keys(astrologerSockets).length,
-    sockets: astrologerSockets,
+    astrologerSockets,
+    connectedUsers: Object.keys(userSockets).length,
+    userSockets,
   });
+});
+
+// ✅ NEW — DB isOnline vs live socket cross-check
+// Isse exactly wo mismatch dikhega jo "astrologer is not available" error deta hai
+router.get('/online-status', async (req, res) => {
+  try {
+    const Astrologer = require('../models/Astrologer');
+    const astrologerSockets = req.app.get('astrologerSockets') || {};
+    const connectedIds = Object.keys(astrologerSockets);
+
+    const dbOnline = await Astrologer.find({ isOnline: true }).select('_id name isOnline');
+
+    const mismatched = dbOnline
+      .filter((a) => !connectedIds.includes(a._id.toString()))
+      .map((a) => ({ _id: a._id, name: a.name, issue: 'DB says online, NO live socket' }));
+
+    res.json({
+      liveSocketIds: connectedIds,
+      dbOnlineAstrologers: dbOnline,
+      mismatched, // ⚠️ ye array khali honi chahiye, agar khali nahi hai to yahi bug ka proof hai
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 module.exports = router;
