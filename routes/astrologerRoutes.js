@@ -13,6 +13,23 @@ router.get('/', async (req, res) => {
     });
   }
 });
+router.get('/:id', async (req, res) => {
+  try {
+    const astrologer = await Astrologer.findById(req.params.id);
+
+    if (!astrologer) {
+      return res.status(404).json({
+        message: 'Astrologer not found',
+      });
+    }
+
+    res.json(astrologer);
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
+});
 
 // ✅ NEW — dashboard ka toggleOnline() ye route call karta hai lekin ye
 // pehle exist hi nahi karta tha (404 → silently caught in frontend).
