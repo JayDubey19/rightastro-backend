@@ -40,7 +40,7 @@ const astrologerSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
-
+backgroundImageUrl:[String],
     expertise: [String],
 
     languages: [String],
