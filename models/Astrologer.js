@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const astrologerSchema = new mongoose.Schema(
-  {
+ {
     name: String,
 
     email: {
@@ -21,6 +21,48 @@ const astrologerSchema = new mongoose.Schema(
     experience: Number,
 
     pricePerMinute: Number,
+
+    profileImage: String,
+
+    images: [String],
+
+    rating: {
+      type: Number,
+      default: 0,
+    },
+
+    totalConsultations: {
+      type: Number,
+      default: 0,
+    },
+
+    followersCount: {
+      type: Number,
+      default: 0,
+    },
+
+    expertise: [String],
+
+    languages: [String],
+
+    bio: String,
+
+    consultationStyle: String,
+
+    spiritualBackground: String,
+
+    whyConsultMe: [String],
+
+    reviews: [
+      {
+        id: String,
+        userName: String,
+        userImageUrl: String,
+        rating: Number,
+        comment: String,
+        date: String,
+      },
+    ],
 
     isOnline: {
       type: Boolean,
