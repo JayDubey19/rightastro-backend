@@ -80,6 +80,12 @@ const getCallToken = async (req, res) => {
 
     if (!astrologerSocketId) {
       await CallSession.findByIdAndUpdate(session._id, { status: 'missed' });
+      // ✅ FIX: DB said isOnline:true but there's no live socket for this
+      // astrologer (app backgrounded / killed / never reconnected after a
+      // server restart). Correct the DB now so the next read (dashboard,
+      // user home list, next call attempt) shows the real state instead of
+      // repeating this same 400 forever.
+      await Astrologer.findByIdAndUpdate(astrologerId, { isOnline: false });
       return res.status(400).json({ message: 'Astrologer is not available right now' });
     }
 
