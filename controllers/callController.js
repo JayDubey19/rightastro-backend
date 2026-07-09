@@ -171,6 +171,31 @@ const endCall = async (req, res) => {
       console.warn('Could not update astrologer totals:', e.message);
     }
 
+    // ✅ FIX: notify BOTH sides over socket that the call has ended.
+    // Previously the only way the astrologer's screen learned the user hung
+    // up was Agora's onUserOffline event — but AstrologerCallScreen never
+    // called acceptCall() itself, so that event never reached the visible
+    // screen. This socket signal is independent of Agora's engine/handler
+    // wiring and reaches the astrologer (and user) regardless of which
+    // screen is currently on top of the stack.
+    try {
+      const io = req.app.get('io');
+      const astrologerSockets = req.app.get('astrologerSockets') || {};
+      const userSockets = req.app.get('userSockets') || {};
+
+      const astrologerSocketId = astrologerSockets[session.astrologerId._id.toString()];
+      if (astrologerSocketId) {
+        io.to(astrologerSocketId).emit('call_ended', { sessionId, durationSeconds, totalCost });
+      }
+
+      const userSocketId = userSockets[session.userId.toString()];
+      if (userSocketId) {
+        io.to(userSocketId).emit('call_ended', { sessionId, durationSeconds, totalCost });
+      }
+    } catch (e) {
+      console.warn('Could not emit call_ended:', e.message);
+    }
+
     console.log(`✅ Call ended: ${sessionId} | ${durationSeconds}s | ₹${totalCost}`);
     return res.status(200).json({ message: 'Call ended', durationSeconds, totalCost, session: updated });
   } catch (error) {
