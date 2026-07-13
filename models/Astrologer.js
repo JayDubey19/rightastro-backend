@@ -1,15 +1,36 @@
 const mongoose = require('mongoose');
 
 const astrologerSchema = new mongoose.Schema(
- {
+  {
     name: String,
 
+    // Legacy — admin can still record an email for contact/reference,
+    // but it is NOT used for login anymore.
     email: {
       type: String,
       unique: true,
+      sparse: true,
     },
 
-    password: String,
+    // ✅ Primary login identifier — account created by admin only
+    mobile: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+      index: true,
+    },
+
+    // ✅ Hashed 6-digit PIN (bcrypt)
+    pin: {
+      type: String,
+      required: true,
+    },
+
+    password: {
+      type: String,
+      required: false, // legacy, unused
+    },
 
     role: {
       type: String,
@@ -17,45 +38,22 @@ const astrologerSchema = new mongoose.Schema(
     },
 
     skills: [String],
-
     experience: Number,
-
     pricePerMinute: Number,
-
     profileImage: String,
-
     images: [String],
 
-    rating: {
-      type: Number,
-      default: 0,
-    },
+    rating: { type: Number, default: 0 },
+    totalConsultations: { type: Number, default: 0 },
+    followersCount: { type: Number, default: 0 },
 
-    totalConsultations: {
-      type: Number,
-      default: 0,
-    },
-
-    followersCount: {
-      type: Number,
-      default: 0,
-    },
-
-    backgroundImageUrl: {
-  type: String,
-  default: '',
-},
+    backgroundImageUrl: { type: String, default: '' },
 
     expertise: [String],
-
     languages: [String],
-
     bio: String,
-
     consultationStyle: String,
-
     spiritualBackground: String,
-
     whyConsultMe: [String],
 
     reviews: [
@@ -73,11 +71,24 @@ const astrologerSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+
+    // ✅ For push notifications (incoming call alerts etc.)
+    fcmToken: {
+      type: String,
+      default: null,
+    },
+
+    // ✅ Brute-force protection on PIN login
+    failedPinAttempts: {
+      type: Number,
+      default: 0,
+    },
+    lockUntil: {
+      type: Date,
+      default: null,
+    },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
-module.exports = mongoose.model(
-  'Astrologer',
-  astrologerSchema
-);
+module.exports = mongoose.model('Astrologer', astrologerSchema);

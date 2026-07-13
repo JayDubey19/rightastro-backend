@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Astrologer = require('../models/Astrologer');
+const { protect, requireRole } = require('../middleware/auth');
 
 // ─── Helper: map raw Mongoose doc → clean API response shape ────────────────
 // Frontend `Astrologer` type expects `imageUrl` (avatar) and
@@ -59,9 +60,18 @@ router.get('/:id', async (req, res) => {
 // ─── PATCH astrologer (online status + images) ────────────────────────────
 // dashboard ka toggleOnline() ye route call karta hai.
 // Ab profileImage aur backgroundImageUrl bhi update kiye ja sakte hain.
-router.patch('/:id', async (req, res) => {
+//
+// ✅ SECURITY FIX: pehle ye route bina auth ke tha — koi bhi kisi bhi
+// astrologer ka isOnline/images/profile change kar sakta tha. Ab sirf
+// wahi astrologer apna khud ka profile update kar sakta hai (JWT se verify).
+router.patch('/:id', protect, requireRole('astrologer'), async (req, res) => {
   try {
     const { id } = req.params;
+
+    if (req.user.id !== id) {
+      return res.status(403).json({ message: 'Forbidden — you can only update your own profile' });
+    }
+
     const { isOnline, profileImage, backgroundImageUrl, images } = req.body;
 
     const updateData = {};
