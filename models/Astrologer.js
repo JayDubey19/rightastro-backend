@@ -47,7 +47,16 @@ const astrologerSchema = new mongoose.Schema(
     totalConsultations: { type: Number, default: 0 },
     followersCount: { type: Number, default: 0 },
 
-    backgroundImageUrl: { type: String, default: '' },
+    // Drives the card/hero background theme on the frontend (gradient +
+    // SVG pattern + pill colors — see theme/categoryTheme.tsx). Replaces
+    // the old backgroundImageUrl field: the backend no longer stores or
+    // serves a background image, only this category string.
+    category: {
+      type: String,
+      enum: ['vedic', 'tarot', 'palmistry', 'vastu', 'numerology', 'kp'],
+      default: 'vedic',
+      required: true,
+    },
 
     expertise: [String],
     languages: [String],
