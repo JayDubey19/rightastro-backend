@@ -11,6 +11,8 @@ const callRoutes = require('./routes/callRoutes');
 const debugRoutes = require('./routes/debugRoutes');
 const Astrologer = require('./models/Astrologer'); // ✅ NEW — isOnline sync ke liye
 const userRoutes = require('./routes/userRoutes');
+const kundliRoutes = require('./routes/kundliRoutes'); // ✅ NEW — free kundli generator
+
 
 const app = express();
 const server = http.createServer(app);
@@ -93,6 +95,7 @@ app.use('/api/astrologers', astrologerRoutes);
 app.use('/api/calls', callRoutes);
 app.use('/api/debug', debugRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/kundli', kundliRoutes);
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
