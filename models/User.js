@@ -34,6 +34,13 @@ const userSchema = new mongoose.Schema(
       required: false,
     },
 
+    birthDetails: {
+  name: { type: String, default: '' },
+  dob: { type: String, default: '' },
+  timeOfBirth: { type: String, default: '' },
+  placeOfBirth: { type: String, default: '' },
+},
+
     role: {
       type: String,
       default: 'user',

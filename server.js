@@ -10,6 +10,7 @@ const astrologerRoutes = require('./routes/astrologerRoutes');
 const callRoutes = require('./routes/callRoutes');
 const debugRoutes = require('./routes/debugRoutes');
 const Astrologer = require('./models/Astrologer'); // ✅ NEW — isOnline sync ke liye
+const userRoutes = require('./routes/userRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -91,6 +92,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/astrologers', astrologerRoutes);
 app.use('/api/calls', callRoutes);
 app.use('/api/debug', debugRoutes);
+app.use('/api/users', userRoutes);
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 

@@ -1,13 +1,16 @@
 /**
  * callController.js — UPDATED
  *
- * Added:
+ * Added earlier:
  * 1. getTodayStats — GET /api/calls/stats/today?astrologerId=xxx
- *    Returns: { todayEarnings, todayMinutes, todaySessions }
  * 2. getAstrologerCallHistory — GET /api/calls/astrologer/:astrologerId
- *    Returns last 20 calls for astrologer (with userId populated)
  *
- * Existing endpoints unchanged.
+ * NEW (this round):
+ * - getCallToken accepts `birthDetails` + `consultationTopic` in the body,
+ *   stores them on the CallSession, and includes them in the `incoming_call`
+ *   socket payload so the astrologer sees them on IncomingCallScreen
+ *   BEFORE accepting.
+ *
  * channelName fix (max 40 chars) stays.
  */
 
@@ -30,7 +33,13 @@ const makeChannelName = (userId, astrologerId) => {
 
 const getCallToken = async (req, res) => {
   try {
-    const { astrologerId, userId, durationMinutes = 10 } = req.body;
+    const {
+      astrologerId,
+      userId,
+      durationMinutes = 10,
+      birthDetails,       // NEW — { name, dob, timeOfBirth, placeOfBirth }
+      consultationTopic,  // NEW — string
+    } = req.body;
 
     console.log(`📞 getCallToken — userId: ${userId}, astrologerId: ${astrologerId}, duration: ${durationMinutes}min`);
 
@@ -65,12 +74,23 @@ const getCallToken = async (req, res) => {
       return res.status(500).json({ message: `Token error: ${tokenErr.message}` });
     }
 
+    // NEW — sanitize birthDetails so we never store an unexpected shape
+    const safeBirthDetails = {
+      name: birthDetails?.name || '',
+      dob: birthDetails?.dob || '',
+      timeOfBirth: birthDetails?.timeOfBirth || '',
+      placeOfBirth: birthDetails?.placeOfBirth || '',
+    };
+    const safeTopic = typeof consultationTopic === 'string' ? consultationTopic : '';
+
     const session = await CallSession.create({
       channelName,
       userId,
       astrologerId,
       durationMinutes: duration,
       status: 'pending',
+      birthDetails: safeBirthDetails,   // NEW
+      consultationTopic: safeTopic,     // NEW
     });
     console.log(`✅ Session created: ${session._id}`);
 
@@ -97,6 +117,8 @@ const getCallToken = async (req, res) => {
       userId,
       durationMinutes: duration,
       callerName,
+      birthDetails: safeBirthDetails,   // NEW — astrologer's IncomingCallScreen reads this
+      consultationTopic: safeTopic,     // NEW
     });
     console.log(`✅ incoming_call emitted → socket ${astrologerSocketId}`);
 
@@ -230,7 +252,7 @@ const getCallHistory = async (req, res) => {
   }
 };
 
-// ─── getAstrologerCallHistory (NEW) ──────────────────────────────────────────
+// ─── getAstrologerCallHistory ──────────────────────────────────────────────
 // GET /api/calls/astrologer/:astrologerId
 // Returns last 20 sessions for this astrologer, with caller name populated
 
@@ -247,7 +269,7 @@ const getAstrologerCallHistory = async (req, res) => {
   }
 };
 
-// ─── getTodayStats (NEW) ─────────────────────────────────────────────────────
+// ─── getTodayStats ─────────────────────────────────────────────────────────
 // GET /api/calls/stats/today?astrologerId=xxx
 // Returns { todayEarnings, todayMinutes, todaySessions }
 
@@ -288,6 +310,6 @@ module.exports = {
   endCall,
   rejectCall,
   getCallHistory,
-  getAstrologerCallHistory, // NEW
-  getTodayStats,            // NEW
+  getAstrologerCallHistory,
+  getTodayStats,
 };
