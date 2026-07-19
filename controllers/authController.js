@@ -9,11 +9,24 @@ const PIN_REGEX = /^\d{6}$/; // 6-digit PIN
 const MAX_PIN_ATTEMPTS = 5;
 const LOCK_TIME_MS = 15 * 60 * 1000; // 15 minutes
 
-const signToken = (id, role) => {
+// ✅ UPDATED — token now embeds `sv` (sessionVersion) so `protect` can
+// detect stale tokens from a previous login. See auth.js for the check.
+const signToken = (id, role, sv) => {
   if (!process.env.JWT_SECRET) {
     throw new Error('JWT_SECRET not set on server');
   }
-  return jwt.sign({ id, role }, process.env.JWT_SECRET, { expiresIn: '30d' });
+  return jwt.sign({ id, role, sv }, process.env.JWT_SECRET, { expiresIn: '30d' });
+};
+
+// ✅ NEW — call this at the moment of a successful login. Bumps the
+// account's sessionVersion by 1, saves it, and signs a token carrying
+// that new value. Any token issued before this point now has a stale
+// `sv` and will be rejected by `protect` — i.e. only the device that
+// just logged in stays authenticated; all older sessions die instantly.
+const issueSession = async (doc, role) => {
+  doc.sessionVersion = (doc.sessionVersion || 0) + 1;
+  await doc.save();
+  return signToken(doc._id, role, doc.sessionVersion);
 };
 
 const isLocked = (doc) => doc.lockUntil && doc.lockUntil.getTime() > Date.now();
@@ -65,7 +78,8 @@ exports.registerUser = async (req, res) => {
       fcmToken: fcmToken || null,
     });
 
-    const token = signToken(user._id, user.role);
+    // Brand-new account, nothing to invalidate — just sign at sv=0.
+    const token = signToken(user._id, user.role, user.sessionVersion);
 
     res.status(201).json({
       token,
@@ -114,7 +128,9 @@ exports.loginUser = async (req, res) => {
       await user.save();
     }
 
-    const token = signToken(user._id, user.role);
+    // ✅ Bumps sessionVersion → any older token (other device) instantly
+    // stops working next time it's used against `protect`.
+    const token = await issueSession(user, user.role);
 
     res.json({
       token,
@@ -162,7 +178,9 @@ exports.loginAstrologer = async (req, res) => {
       await astrologer.save();
     }
 
-    const token = signToken(astrologer._id, 'astrologer');
+    // ✅ Bumps sessionVersion → kicks any other logged-in device for this
+    // astrologer account.
+    const token = await issueSession(astrologer, 'astrologer');
 
     res.json({
       token,
@@ -348,9 +366,12 @@ exports.completeMigration = async (req, res) => {
     doc.pin = await bcrypt.hash(pin, 10);
     // Old password no longer needed once migrated to PIN login.
     doc.password = undefined;
-    await doc.save();
 
-    const token = signToken(doc._id, decoded.role);
+    // ✅ issueSession() below does doc.save() itself (it bumps
+    // sessionVersion + saves), so we don't need a separate save() call
+    // here — the mobile/pin/password changes above get persisted in
+    // that same save.
+    const token = await issueSession(doc, decoded.role);
 
     if (decoded.role === 'astrologer') {
       return res.json({

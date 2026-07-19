@@ -66,6 +66,18 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+
+    // ✅ NEW — single active session enforcement.
+    // Bumped by +1 every time this account logs in successfully.
+    // The JWT issued at login embeds this exact value as `sv`. The
+    // `protect` middleware compares token.sv against this DB value on
+    // every request — a mismatch means a newer login has happened
+    // elsewhere since this token was issued, so the token is rejected.
+    // This is what makes "only the latest device stays logged in" work.
+    sessionVersion: {
+      type: Number,
+      default: 0,
+    },
   },
   { timestamps: true },
 );

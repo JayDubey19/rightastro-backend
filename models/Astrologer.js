@@ -96,6 +96,13 @@ const astrologerSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+
+    // ✅ NEW — single active session enforcement (see User.js for the
+    // full explanation). Same mechanism applies to astrologer accounts.
+    sessionVersion: {
+      type: Number,
+      default: 0,
+    },
   },
   { timestamps: true },
 );
