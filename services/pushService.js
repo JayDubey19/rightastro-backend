@@ -1,6 +1,9 @@
 /**
  * pushService.js
  *
+ * UPDATED for firebase-admin v14's modular API — messaging is now its own
+ * subpath import (`firebase-admin/messaging`) instead of `admin.messaging()`.
+ *
  * Sends DATA-ONLY (no `notification` block) high-priority FCM messages to
  * the astrologer's device. Data-only is intentional:
  *  - It lets our own `setBackgroundMessageHandler` in the RN app run even
@@ -10,9 +13,8 @@
  *    AND our custom one — double notification / no ringtone control.
  */
 
-const admin = require('../config/firebaseAdmin');
-
-const isFirebaseReady = () => admin.apps.length > 0;
+const { isFirebaseReady } = require('../config/firebaseAdmin');
+const { getMessaging } = require('firebase-admin/messaging');
 
 /**
  * Fired when a new call is created (getCallToken) — this is what makes the
@@ -29,7 +31,7 @@ const sendIncomingCallPush = async (fcmToken, payload) => {
   }
 
   try {
-    await admin.messaging().send({
+    await getMessaging().send({
       token: fcmToken,
       android: {
         priority: 'high', // wakes the device / delivers even in Doze
@@ -64,7 +66,7 @@ const sendCallCancelledPush = async (fcmToken, sessionId) => {
   if (!fcmToken || !isFirebaseReady()) return false;
 
   try {
-    await admin.messaging().send({
+    await getMessaging().send({
       token: fcmToken,
       android: { priority: 'high' },
       data: {
