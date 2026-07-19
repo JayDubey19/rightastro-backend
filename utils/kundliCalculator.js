@@ -160,8 +160,19 @@ async function generateKundli(birthDetails) {
   // ✅ FIX: EclipticLongitude(body, date) → true ecliptic OF DATE longitude
   // (pehle GeoVector+Ecliptic se J2000-fixed frame aa raha tha, jo purani
   // dates ke liye galat sign de sakta tha)
+  //
+  // ⚠️ Sun EXCEPTION: EclipticLongitude() andar heliocentric vector use
+  // karta hai (body ka Sun ke relative position), aur Sun ka khud koi
+  // heliocentric vector nahi hota (wo hi reference point hai) — isliye
+  // Sun ke liye ye function crash karta hai: "Cannot calculate
+  // heliocentric longitude of the Sun". Sun ke liye alag se
+  // Astronomy.SunPosition(date) use karo, jo seedha geocentric true
+  // ecliptic-of-date longitude deta hai (.elon).
   const planets = PLANETS.map(({ key, body, label }) => {
-    const tropicalLon = Astronomy.EclipticLongitude(body, utcDate);
+    const tropicalLon =
+      key === 'Sun'
+        ? Astronomy.SunPosition(utcDate).elon
+        : Astronomy.EclipticLongitude(body, utcDate);
     const sidereal = norm360(tropicalLon - ayanamsa);
     const signIdx = signIndex(sidereal);
     const houseNum = ((signIdx - ascSignIdx + 12) % 12) + 1;
