@@ -1,23 +1,27 @@
 /**
- * callController.js — UPDATED
+ * callController.js — UPDATED (FCM incoming-call push added)
  *
- * Added earlier:
- * 1. getTodayStats — GET /api/calls/stats/today?astrologerId=xxx
- * 2. getAstrologerCallHistory — GET /api/calls/astrologer/:astrologerId
+ * NEW in this round:
+ * - getCallToken now ALSO sends an FCM data push to the astrologer's
+ *   fcmToken, in addition to the existing Socket.IO `incoming_call` emit.
+ *   This is what makes the astrologer's phone ring even when their app is
+ *   fully killed (Socket.IO can't reach a dead JS process; FCM can).
+ * - If there's no live socket for the astrologer (app backgrounded/killed)
+ *   we no longer hard-fail with 400 as long as we have a fcmToken to push
+ *   to — we rely on the push to wake the app instead.
+ * - endCall / rejectCall now also send a `call_cancelled` push so the
+ *   native incoming-call UI on the astrologer's phone gets dismissed if
+ *   the caller hangs up / it times out before being answered.
  *
- * NEW (this round):
- * - getCallToken accepts `birthDetails` + `consultationTopic` in the body,
- *   stores them on the CallSession, and includes them in the `incoming_call`
- *   socket payload so the astrologer sees them on IncomingCallScreen
- *   BEFORE accepting.
- *
- * channelName fix (max 40 chars) stays.
+ * Everything else (Agora token gen, channelName, birthDetails/topic
+ * storage) is unchanged from before.
  */
 
 const { generateAgoraToken } = require('../utils/agoraTokenGenerator');
 const CallSession = require('../models/CallSession');
 const Astrologer = require('../models/Astrologer');
 const User = require('../models/User');
+const { sendIncomingCallPush, sendCallCancelledPush } = require('../services/pushService');
 
 /**
  * Short unique channel name — max ~22 chars, Agora safe
@@ -37,8 +41,8 @@ const getCallToken = async (req, res) => {
       astrologerId,
       userId,
       durationMinutes = 10,
-      birthDetails,       // NEW — { name, dob, timeOfBirth, placeOfBirth }
-      consultationTopic,  // NEW — string
+      birthDetails,
+      consultationTopic,
     } = req.body;
 
     console.log(`📞 getCallToken — userId: ${userId}, astrologerId: ${astrologerId}, duration: ${durationMinutes}min`);
@@ -54,7 +58,24 @@ const getCallToken = async (req, res) => {
 
     const astrologer = await Astrologer.findById(astrologerId);
     if (!astrologer) return res.status(404).json({ message: 'Astrologer not found' });
-    if (!astrologer.isOnline) return res.status(400).json({ message: 'Astrologer is currently offline' });
+
+    const io = req.app.get('io');
+    const astrologerSockets = req.app.get('astrologerSockets') || {};
+    const astrologerSocketId = astrologerSockets[astrologerId.toString()];
+    const hasLiveSocket = !!astrologerSocketId;
+    const hasFcmToken = !!astrologer.fcmToken;
+
+    // ✅ CHANGED: previously this hard-required `astrologer.isOnline` AND a
+    // live socket. Now: allow the call to go through if EITHER the socket
+    // is live OR we have an fcmToken to push to (app may be killed but
+    // still reachable via FCM). Only reject if we have neither.
+    if (!astrologer.isOnline) {
+      return res.status(400).json({ message: 'Astrologer is currently offline' });
+    }
+    if (!hasLiveSocket && !hasFcmToken) {
+      await Astrologer.findByIdAndUpdate(astrologerId, { isOnline: false });
+      return res.status(400).json({ message: 'Astrologer is not available right now' });
+    }
 
     let callerName = 'Client';
     try {
@@ -74,7 +95,6 @@ const getCallToken = async (req, res) => {
       return res.status(500).json({ message: `Token error: ${tokenErr.message}` });
     }
 
-    // NEW — sanitize birthDetails so we never store an unexpected shape
     const safeBirthDetails = {
       name: birthDetails?.name || '',
       dob: birthDetails?.dob || '',
@@ -89,27 +109,12 @@ const getCallToken = async (req, res) => {
       astrologerId,
       durationMinutes: duration,
       status: 'pending',
-      birthDetails: safeBirthDetails,   // NEW
-      consultationTopic: safeTopic,     // NEW
+      birthDetails: safeBirthDetails,
+      consultationTopic: safeTopic,
     });
     console.log(`✅ Session created: ${session._id}`);
 
-    const io = req.app.get('io');
-    const astrologerSockets = req.app.get('astrologerSockets');
-    const astrologerSocketId = astrologerSockets[astrologerId.toString()];
-
-    if (!astrologerSocketId) {
-      await CallSession.findByIdAndUpdate(session._id, { status: 'missed' });
-      // ✅ FIX: DB said isOnline:true but there's no live socket for this
-      // astrologer (app backgrounded / killed / never reconnected after a
-      // server restart). Correct the DB now so the next read (dashboard,
-      // user home list, next call attempt) shows the real state instead of
-      // repeating this same 400 forever.
-      await Astrologer.findByIdAndUpdate(astrologerId, { isOnline: false });
-      return res.status(400).json({ message: 'Astrologer is not available right now' });
-    }
-
-    io.to(astrologerSocketId).emit('incoming_call', {
+    const incomingCallPayload = {
       sessionId: session._id,
       channelName,
       astrologerToken,
@@ -117,10 +122,20 @@ const getCallToken = async (req, res) => {
       userId,
       durationMinutes: duration,
       callerName,
-      birthDetails: safeBirthDetails,   // NEW — astrologer's IncomingCallScreen reads this
-      consultationTopic: safeTopic,     // NEW
-    });
-    console.log(`✅ incoming_call emitted → socket ${astrologerSocketId}`);
+      birthDetails: safeBirthDetails,
+      consultationTopic: safeTopic,
+    };
+
+    // Fast path: astrologer app is open + socket alive → instant delivery.
+    if (hasLiveSocket) {
+      io.to(astrologerSocketId).emit('incoming_call', incomingCallPayload);
+      console.log(`✅ incoming_call emitted → socket ${astrologerSocketId}`);
+    }
+
+    // Always ALSO send FCM — this is the path that rings the phone when
+    // the app is backgrounded or fully killed. Fire-and-forget; we don't
+    // want a slow/failed push to block the caller's response.
+    sendIncomingCallPush(astrologer.fcmToken, incomingCallPayload).catch(() => {});
 
     return res.status(200).json({
       token: userToken,
@@ -181,7 +196,6 @@ const endCall = async (req, res) => {
       { new: true },
     );
 
-    // Optionally update astrologer's totalEarnings + totalConsultations
     try {
       await Astrologer.findByIdAndUpdate(session.astrologerId._id, {
         $inc: {
@@ -193,13 +207,6 @@ const endCall = async (req, res) => {
       console.warn('Could not update astrologer totals:', e.message);
     }
 
-    // ✅ FIX: notify BOTH sides over socket that the call has ended.
-    // Previously the only way the astrologer's screen learned the user hung
-    // up was Agora's onUserOffline event — but AstrologerCallScreen never
-    // called acceptCall() itself, so that event never reached the visible
-    // screen. This socket signal is independent of Agora's engine/handler
-    // wiring and reaches the astrologer (and user) regardless of which
-    // screen is currently on top of the stack.
     try {
       const io = req.app.get('io');
       const astrologerSockets = req.app.get('astrologerSockets') || {};
@@ -218,6 +225,11 @@ const endCall = async (req, res) => {
       console.warn('Could not emit call_ended:', e.message);
     }
 
+    // ✅ NEW: dismiss the native incoming-call UI if it was never answered
+    // and one side ended it via /calls/end instead of the accept flow
+    // (e.g. the session was force-ended while still ringing).
+    sendCallCancelledPush(session.astrologerId?.fcmToken, sessionId).catch(() => {});
+
     console.log(`✅ Call ended: ${sessionId} | ${durationSeconds}s | ₹${totalCost}`);
     return res.status(200).json({ message: 'Call ended', durationSeconds, totalCost, session: updated });
   } catch (error) {
@@ -230,7 +242,19 @@ const endCall = async (req, res) => {
 const rejectCall = async (req, res) => {
   try {
     const { sessionId } = req.body;
-    await CallSession.findByIdAndUpdate(sessionId, { status: 'missed' });
+    const session = await CallSession.findByIdAndUpdate(
+      sessionId,
+      { status: 'missed' },
+      { new: true },
+    ).populate('astrologerId', 'fcmToken');
+
+    // ✅ NEW — dismiss ringing UI on the astrologer's phone (covers the
+    // case where the CALLER cancels before the astrologer answers, or the
+    // 30s auto-decline countdown on IncomingCallScreen fires).
+    if (session?.astrologerId?.fcmToken) {
+      sendCallCancelledPush(session.astrologerId.fcmToken, sessionId).catch(() => {});
+    }
+
     return res.status(200).json({ message: 'Call rejected' });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -253,8 +277,6 @@ const getCallHistory = async (req, res) => {
 };
 
 // ─── getAstrologerCallHistory ──────────────────────────────────────────────
-// GET /api/calls/astrologer/:astrologerId
-// Returns last 20 sessions for this astrologer, with caller name populated
 
 const getAstrologerCallHistory = async (req, res) => {
   try {
@@ -270,8 +292,6 @@ const getAstrologerCallHistory = async (req, res) => {
 };
 
 // ─── getTodayStats ─────────────────────────────────────────────────────────
-// GET /api/calls/stats/today?astrologerId=xxx
-// Returns { todayEarnings, todayMinutes, todaySessions }
 
 const getTodayStats = async (req, res) => {
   try {
