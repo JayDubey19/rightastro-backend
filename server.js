@@ -36,12 +36,15 @@ io.on('connection', (socket) => {
     socket.astrologerId = astrologerId.toString(); // ✅ disconnect cleanup ke liye store
     console.log(`✅ Astrologer ${astrologerId} → socket ${socket.id}`);
 
-    // ✅ FIX: socket register hote hi DB me bhi isOnline = true karo
-    try {
-      await Astrologer.findByIdAndUpdate(astrologerId, { isOnline: true });
-    } catch (e) {
-      console.error('❌ isOnline=true update failed:', e.message);
-    }
+    // ✅ CHANGED: this used to force isOnline:true here, unconditionally,
+    // on every socket connect/reconnect (including the automatic
+    // reconnect that fires whenever the app comes to the foreground).
+    // That meant even an astrologer who had manually toggled themselves
+    // OFFLINE would get flipped back online just by reopening the app.
+    // isOnline is now controlled ONLY by the explicit PATCH toggle in
+    // astrologerRoutes.js — registering a socket just makes them
+    // reachable for the fast in-app delivery path, it says nothing about
+    // whether they want to be listed as available.
   });
 
   socket.on('register_user', (userId) => {
@@ -62,11 +65,22 @@ io.on('connection', (socket) => {
         delete astrologerSockets[socket.astrologerId];
         console.log(`❌ Astrologer ${socket.astrologerId} disconnected`);
 
-        try {
-          await Astrologer.findByIdAndUpdate(socket.astrologerId, { isOnline: false });
-        } catch (e) {
-          console.error('❌ isOnline=false update failed:', e.message);
-        }
+        // ✅ CHANGED: previously this forced isOnline:false the instant the
+        // socket dropped (app backgrounded/killed, brief network blip,
+        // etc.) — which caused two problems: (1) astrologer flips to
+        // "offline" without ever touching the toggle, then auto-flips
+        // back to "online" the moment the app reopens (register_astrologer
+        // below always sets isOnline:true), so the toggle stopped being a
+        // real user preference; (2) it also broke the killed-app ringing
+        // feature, since getCallToken refuses calls whenever
+        // astrologer.isOnline is false, so a killed app could never
+        // receive a call at all — even via FCM push.
+        //
+        // `isOnline` is now purely a manual preference set by the
+        // astrologer's toggle (PATCH /astrologers/:id in astrologerRoutes.js).
+        // Socket presence/absence no longer touches it. Live-vs-FCM
+        // delivery is decided separately in getCallToken (callController.js)
+        // using astrologerSockets + fcmToken, not this flag.
       } else {
         console.log(`⏭️ Stale disconnect ignored for astrologer ${socket.astrologerId} (already replaced by newer socket)`);
       }
