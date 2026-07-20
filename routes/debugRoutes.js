@@ -83,4 +83,23 @@ router.get('/online-status', async (req, res) => {
   }
 });
 
+// ✅ NEW — check a specific astrologer's stored fcmToken + isOnline state
+// directly. Call from browser:
+// https://<your-backend>/api/debug/astrologer-status/<astrologerId>
+router.get('/astrologer-status/:id', async (req, res) => {
+  try {
+    const Astrologer = require('../models/Astrologer');
+    const a = await Astrologer.findById(req.params.id).select('name isOnline fcmToken');
+    if (!a) return res.status(404).json({ message: 'Not found' });
+    res.json({
+      name: a.name,
+      isOnline: a.isOnline,
+      hasFcmToken: !!a.fcmToken,
+      fcmTokenPreview: a.fcmToken ? `${a.fcmToken.slice(0, 20)}...` : null,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 module.exports = router;
